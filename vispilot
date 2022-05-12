@@ -1,0 +1,184 @@
+#!/usr/bin/env ruby
+require 'fileutils'
+require 'pathname'
+require 'chunky_png'
+
+module VisPilot; end
+
+class VisPilot::AutomationWrapper
+	class TargetNotFoundException < Exception; end
+	class MovementInterruptedException < Exception; end
+	
+	def initialize
+		self.check_compatibility
+	end
+	
+	def check_compatibility
+		['xdotool', 'scrot', 'visgrep', 'xclip'].each{|i| p raise(RuntimeError, "automation tool '#{i}' not installed") if `which #{i}`.empty?}
+	end
+	
+	def save_fullscreen(filename)
+		FileUtils.rm(filename) if File.exist?(filename)
+		`scrot -z #{filename}`
+		raise(RuntimeError, "screenshot '#{filename}'could not be saved") if not File.exist?(filename)
+	end
+
+	def save_selection(filename)
+		FileUtils.rm(filename) if File.exist?(filename)
+		`scrot -fsz --line style=dash #{filename}`
+		raise(RuntimeError, "screenshot '#{filename}'could not be saved") if not File.exist?(filename)
+	end
+	
+	def find_image(container_file, detect_file)
+		list = find_images(container_file, detect_file)
+		raise(TargetNotFoundException, 'ambiguous matches') if list.length > 1
+		return list.first
+	end
+	
+	def find_images(container_file, detect_file)
+		list = __visgrep(container_file, detect_file)
+		raise(TargetNotFoundException, 'no match') if list.length.zero?
+		return list
+	end
+	
+	def __visgrep(container_file, detect_file)
+		return `visgrep #{container_file} #{detect_file}`.strip.split(/\R/).map{|i| [(t = i.split)[0].split(',').map{|j| j.to_i}, t[1].to_i]}
+	end
+	
+	def getmouselocation
+		raise(RuntimeError) if (input = `xdotool getmouselocation`.chomp).empty?
+		pos_h = input.split.map{|i| [(t=i.split(':'))[0].to_sym, t[1].to_i]}.to_h
+		pos = [pos_h[:x], pos_h[:y]]
+	end
+	
+	def mousemove(x, y)
+		`xdotool mousemove #{x} #{y}`
+	end
+	
+	def mousemove_animate(x, y, movement: 'instant', duration: 0.15, fps: 60)
+		offset = getmouselocation()
+		goal  = [x, y]
+		diff = [goal, offset].transpose.map{|i| i.inject(:-)}
+		
+		if movement == 'instant'
+			mousemove *goal
+		else
+			steps = fps.to_f * duration
+			step = 1.0 / steps
+			interval = 1.0 / fps
+			prev = offset
+			0.step(1, step){|progress|
+				raise(MovementInterruptedException, 'mousemove_animate interrupted by user') if [curr = getmouselocation(), prev].transpose.map{|i| i.inject(:-)}.map{|i| i.abs}.sum.nonzero?
+				
+				curr = 
+					case movement
+					when 'linear'
+						VisPilot::Utils.__sum_of_xy(offset, diff.map{|i| i * progress})
+					when 'smooth'
+						VisPilot::Utils.__sum_of_xy(offset, diff.map{|i| i * VisPilot::Utils.smooth(progress)})
+					when 'smooth1'
+						VisPilot::Utils.__sum_of_xy(offset, diff.map{|i| i * VisPilot::Utils.smooth1(progress)})
+					when 'smooth2'
+						VisPilot::Utils.__sum_of_xy(offset, diff.map{|i| i * VisPilot::Utils.smooth2(progress)})
+					else
+					end
+				mousemove *curr
+				prev = curr
+				sleep interval
+			}
+			mousemove *goal
+		end
+	end
+end
+
+module VisPilot::Utils
+	def self.smooth(progress)
+		progress.to_f < 0.5 ?
+			    ((     progress  * 2) ** 2) / 2 :
+			1 - (((1 - progress) * 2) ** 2) / 2
+	end
+	
+	def self.smooth1(progress)
+		progress ** 2
+	end
+	
+	def self.smooth2(progress)
+		1 - ((1 - progress) ** 2)
+	end
+	
+	def self.__sum_of_xy(*args)
+		args.transpose.map{|i| i.sum.to_i}
+	end
+	
+	def self.available_number(dir: '.', pattern: /^(\d+)/)
+		(existing_h = {0 => nil}.merge(Dir["#{dir}/*"].map{|i| [Pathname(i).basename.to_s =~ pattern && $1.to_i, nil]}.to_h)).delete(nil)
+		existing_h.keys.index{|i| !existing_h.has_key?(i + 1)} + 1
+	end
+end
+
+class VisPilot::VisPilotApplication
+	APPNAME = 'vispilot'
+	
+	def initialize(args)
+		@auto = VisPilot::AutomationWrapper.new
+		case args.shift
+		when 'take'
+			prefix = 'item-'
+			available_number = VisPilot::Utils.available_number(pattern: /^#{prefix}(\d+)/)
+			available_number_str = sprintf("%04d", available_number)
+			detect_file = "#{prefix}#{available_number_str}.png"
+			@auto.save_selection(detect_file)
+		when 'play'
+			detect_file = args.shift
+			script = detect_file =~ /@(.*)\.png/ ? $1 : ''
+			self.play(detect_file, script: script)
+		end
+	end
+	
+	def __with_tmp_dir(&blk)
+		tmp_dir = "/tmp/#{APPNAME}.#{$$}"
+		FileUtils.mkdir(tmp_dir) if not File.exist?(tmp_dir)
+		begin
+			blk.call(tmp_dir)
+		ensure
+			FileUtils.rm_r(tmp_dir)
+		end
+	end
+
+	def play(detect_file, script: '')
+		png_stream = ChunkyPNG::Datastream.from_file(detect_file)
+		detect_size = [png_stream.header_chunk.width, png_stream.header_chunk.height]
+		
+		__with_tmp_dir{|tmp_dir|
+			fullscreen_file = "#{tmp_dir}/fullscreen.png"
+			@auto.save_fullscreen(fullscreen_file)
+			item = nil
+			begin
+				item = @auto.find_image(fullscreen_file, detect_file)
+			rescue VisPilot::AutomationWrapper::TargetNotFoundException
+				redo
+			end
+			target = [item[0][0]+detect_size[0]/2, item[0][1]+detect_size[1]/2]
+			begin
+				#@auto.mousemove_animate(*target, movement: 'smooth', duration: 0.3)
+				@auto.mousemove_animate(*target, movement: 'smooth')
+				#@auto.mousemove_animate(*target)
+			rescue VisPilot::AutomationWrapper::MovementInterruptedException
+				sleep 5
+				redo
+			end
+			
+			commands = script.split('.')
+			commands.each{|command|
+				case command
+				when /^(dbl)?click(\d+)?/
+					repeat = $1 ? 2 : 1
+					button = $2 ? $2.to_i : 1
+					`xdotool click --repeat #{repeat} #{button}`
+				end
+			}
+		}
+	end
+end
+VisPilot::VisPilotApplication.new(ARGV)
+

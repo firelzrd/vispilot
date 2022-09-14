@@ -42,7 +42,7 @@ class VisPilot::AutomationWrapper
 	end
 	
 	def __visgrep(container_file, detect_file)
-		return `visgrep #{container_file} #{detect_file}`.strip.split(/\R/).map{|i| [(t = i.split)[0].split(',').map{|j| j.to_i}, t[1].to_i]}
+		return `./visgrep #{detect_file} #{container_file} -s 1`.strip.split(/\R/).map{|i| [(t = i.split)[0].split(',').map{|j| j.to_i}, t[1].to_i]}
 	end
 	
 	def getmouselocation
@@ -160,11 +160,15 @@ class VisPilot::VisPilotApplication
 			end
 			target = [item[0][0]+detect_size[0]/2, item[0][1]+detect_size[1]/2]
 			begin
-				#@auto.mousemove_animate(*target, movement: 'smooth', duration: 0.3)
-				@auto.mousemove_animate(*target, movement: 'smooth')
+				#@auto.mousemove_animate(*target, movement: 'instant')
+				#@auto.mousemove_animate(*target, movement: 'linear', duration: 0.5)
+				@auto.mousemove_animate(*target, movement: 'smooth', duration: 0.5)
+				#@auto.mousemove_animate(*target, movement: 'smooth1', duration: 0.5)
+				#@auto.mousemove_animate(*target, movement: 'smooth2', duration: 0.5)
+				#@auto.mousemove_animate(*target, movement: 'smooth')
 				#@auto.mousemove_animate(*target)
 			rescue VisPilot::AutomationWrapper::MovementInterruptedException
-				sleep 5
+				sleep 2
 				redo
 			end
 			

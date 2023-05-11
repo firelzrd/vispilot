@@ -1,36 +1,58 @@
 #!/usr/bin/python3
-import sys
+import os
 import cv2
 import numpy as np
-from matplotlib import pyplot as plt
-from optparse import OptionParser
+import argparse
+import sys
 
-parser = OptionParser()
-parser.add_option("-s", "--strictness", dest="strictness", default="0.9",
-                  help="detection strictness (0.0 - 1.0)")
-parser.add_option("-o", "--output", dest="output",
-                  help="File to output the detection result to")
+# Parse command line arguments
+parser = argparse.ArgumentParser()
+parser.add_argument("-s", "--strictness", type=float, default=0.9999991,
+                    help="detection strictness (0.0 - 1.0)")
+parser.add_argument("-o", "--output",
+                    help="File to output the detection result to")
+parser.add_argument("-c", "--capture", action="store_true",
+                    help="Use current screen capture as image")
+args, img_files = parser.parse_known_args()
 
-(options, args) = parser.parse_args()
-if len(args) != 2:
-	print("Expected arguments: SubimgFile ImgFile", file = sys.stderr)
-	quit()
+if not args.capture and len(img_files) != 2:
+    print("Expected arguments: SubimgFile ImgFile", file=sys.stderr)
+    sys.exit(1)
 
-subimg = cv2.imread(args[0], cv2.IMREAD_COLOR)
-img = cv2.imread(args[1], cv2.IMREAD_COLOR)
+# Load image and subimage
+subimg = cv2.imread(img_files[0], cv2.IMREAD_COLOR)
+
+if args.capture:
+    # Take a screen capture and read it through a named pipe
+    tmp_filename = '/tmp/visgrep'
+    os.system(f"scrot -z {tmp_filename}")
+    img = cv2.imread(tmp_filename, cv2.IMREAD_COLOR)
+    os.remove(tmp_filename)
+
+else:
+    img = cv2.imread(img_files[1], cv2.IMREAD_COLOR)
+
+# Get size of subimage
 d, w, h = subimg.shape[::-1]
 
+# Detect matching regions in image
+#result = cv2.matchTemplate(img, subimg, cv2.TM_SQDIFF)
+#result = cv2.matchTemplate(img, subimg, cv2.TM_SQDIFF_NORMED)
+#result = cv2.matchTemplate(img, subimg, cv2.TM_CCORR)
+#result = cv2.matchTemplate(img, subimg, cv2.TM_CCORR_NORMED)
+#result = cv2.matchTemplate(img, subimg, cv2.TM_CCOEFF)
 result = cv2.matchTemplate(img, subimg, cv2.TM_CCOEFF_NORMED)
-#minVal, maxVal, minLoc, maxLoc = cv2.minMaxLoc(result)
-#print(f"max value: {maxVal}, position: {maxLoc}")
-#print(f"min value: {minVal}, position: {minLoc}")
-threshold = float(options.strictness)
-loc = np.where(result >= threshold)
-for pt in zip(*loc[::-1]):
-	if options.output:
-		cv2.rectangle(img, pt, (pt[0] + w - 1, pt[1] + h - 1), (0,0,255), 1)
-	print(f"{pt[0]},{pt[1]}")
 
-if options.output:
-	cv2.imwrite(options.output,img)
+# Get coordinates of detected regions
+threshold = args.strictness
+loc = np.where(result >= threshold)
+
+# Draw red rectangle around detected regions
+for pt in zip(*loc[::-1]):
+    cv2.rectangle(img, pt, (pt[0] + w - 1, pt[1] + h - 1), (0,0,255), 1)
+    print(f"{pt[0]},{pt[1]}")
+
+# Save result to file if specified
+if args.output:
+    cv2.imwrite(args.output, img)
 

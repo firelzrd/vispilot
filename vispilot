@@ -29,20 +29,20 @@ class VisPilot::AutomationWrapper
 		raise(RuntimeError, "screenshot '#{filename}'could not be saved") if not File.exist?(filename)
 	end
 	
-	def find_image(container_file, detect_file)
-		list = find_images(container_file, detect_file)
+	def find_image(detect_file)
+		list = find_images(detect_file)
 		raise(TargetNotFoundException, 'ambiguous matches') if list.length > 1
 		return list.first
 	end
 	
-	def find_images(container_file, detect_file)
-		list = __visgrep(container_file, detect_file)
+	def find_images(detect_file)
+		list = __visgrep(detect_file)
 		raise(TargetNotFoundException, 'no match') if list.length.zero?
 		return list
 	end
 	
-	def __visgrep(container_file, detect_file)
-		return `./visgrep #{detect_file} #{container_file} -s 1`.strip.split(/\R/).map{|i| [(t = i.split)[0].split(',').map{|j| j.to_i}, t[1].to_i]}
+	def __visgrep(subimg_file, img_file = nil)
+		return `./visgrep #{subimg_file} #{img_file || '-c'}`.strip.split(/\R/).map{|i| [(t = i.split)[0].split(',').map{|j| j.to_i}, t[1].to_i]}
 	end
 	
 	def getmouselocation
@@ -150,11 +150,9 @@ class VisPilot::VisPilotApplication
 		detect_size = [png_stream.header_chunk.width, png_stream.header_chunk.height]
 		
 		__with_tmp_dir{|tmp_dir|
-			fullscreen_file = "#{tmp_dir}/fullscreen.png"
-			@auto.save_fullscreen(fullscreen_file)
 			item = nil
 			begin
-				item = @auto.find_image(fullscreen_file, detect_file)
+				item = @auto.find_image(detect_file)
 			rescue VisPilot::AutomationWrapper::TargetNotFoundException
 				redo
 			end
